@@ -171,6 +171,31 @@ public final class Prefs {
         sp(c).edit().putInt("sub_mode", v).apply();
     }
 
+    // ---- 固定小窗独立外观 ----
+    public static int subTextSizeSp(Context c) {
+        return sp(c).getInt("sub_text_size", -1);      // -1 = 跟随全局
+    }
+
+    public static void setSubTextSizeSp(Context c, int v) {
+        sp(c).edit().putInt("sub_text_size", v).apply();
+    }
+
+    public static int subBgAlphaPct(Context c) {
+        return sp(c).getInt("sub_bg_alpha", -1);
+    }
+
+    public static void setSubBgAlphaPct(Context c, int v) {
+        sp(c).edit().putInt("sub_bg_alpha", v).apply();
+    }
+
+    public static int subTextAlphaPct(Context c) {
+        return sp(c).getInt("sub_text_alpha", -1);
+    }
+
+    public static void setSubTextAlphaPct(Context c, int v) {
+        sp(c).edit().putInt("sub_text_alpha", v).apply();
+    }
+
     /** 迷你圆球模式 */
     public static boolean ball(Context c) {
         return sp(c).getBoolean("ball", false);

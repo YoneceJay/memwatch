@@ -199,6 +199,52 @@ public final class SettingsActivity extends Activity {
                         });
             }
         });
+        Button subSize = rowButton(win, "小窗字号：" + (Prefs.subTextSizeSp(this) > 0
+                ? Prefs.subTextSizeSp(this) + "sp" : "跟随全局"));
+        subSize.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Ui.choose(SettingsActivity.this, "固定小窗字号",
+                        new String[]{"跟随全局", "9sp", "11sp", "13sp"}, new int[]{-1, 9, 11, 13},
+                        Prefs.subTextSizeSp(SettingsActivity.this), true, new Ui.OnInt() {
+                            @Override public void on(int val) {
+                                Prefs.setSubTextSizeSp(SettingsActivity.this, val < 0 ? -1 : Math.max(6, val));
+                                reload();
+                                build();
+                            }
+                        });
+            }
+        });
+
+        Button subBg = rowButton(win, "小窗背景透明度：" + (Prefs.subBgAlphaPct(this) > 0
+                ? Prefs.subBgAlphaPct(this) + "%" : "跟随全局"));
+        subBg.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Ui.choose(SettingsActivity.this, "小窗背景透明度", subLabels(), subPcts(),
+                        Prefs.subBgAlphaPct(SettingsActivity.this), true, new Ui.OnInt() {
+                            @Override public void on(int val) {
+                                Prefs.setSubBgAlphaPct(SettingsActivity.this, val < 0 ? -1 : val);
+                                reload();
+                                build();
+                            }
+                        });
+            }
+        });
+
+        Button subText = rowButton(win, "小窗文字透明度：" + (Prefs.subTextAlphaPct(this) > 0
+                ? Prefs.subTextAlphaPct(this) + "%" : "跟随全局"));
+        subText.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Ui.choose(SettingsActivity.this, "小窗文字透明度", subLabels(), subPcts(),
+                        Prefs.subTextAlphaPct(SettingsActivity.this), true, new Ui.OnInt() {
+                            @Override public void on(int val) {
+                                Prefs.setSubTextAlphaPct(SettingsActivity.this, val < 0 ? -1 : val);
+                                reload();
+                                build();
+                            }
+                        });
+            }
+        });
+
         Button battery = rowButton(win, "电池优化白名单（防被系统杀后台）");
         battery.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
@@ -343,6 +389,15 @@ public final class SettingsActivity extends Activity {
         int[] v = new int[n];
         for (int i = 0; i < n; i++) v[i] = i;
         return v;
+    }
+
+    /** 小窗：第一个是「跟随全局」 */
+    private static String[] subLabels() {
+        return new String[]{"跟随全局", "20%", "40%", "60%", "80%", "100%"};
+    }
+
+    private static int[] subPcts() {
+        return new int[]{-1, 20, 40, 60, 80, 100};
     }
 
     private static int[] pcts() {

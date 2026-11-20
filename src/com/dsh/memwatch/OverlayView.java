@@ -64,6 +64,7 @@ public final class OverlayView extends View {
     private float animT = 1f;
 
     private String lastKey = "";
+    private final java.text.SimpleDateFormat clock = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US);
 
     public OverlayView(Context c) {
         super(c);
@@ -129,7 +130,8 @@ public final class OverlayView extends View {
         if (limit > names.length) limit = names.length;
 
         StringBuilder key = new StringBuilder(64);
-        key.append(pct).append('|').append(s.procCount).append('|').append(limit).append('|').append(mode);
+        key.append(pct).append('|').append(s.procCount).append('|').append(limit)
+           .append('|').append(mode).append('|').append(s.ts).append('|').append(s.selfPss);
         for (int i = 0; i < limit; i++) key.append('|').append(s.procs.get(i).kb());
         String k = key.toString();
         if (k.equals(lastKey) && curveSize == s.histSize) return;
@@ -139,7 +141,8 @@ public final class OverlayView extends View {
         alert = usedPct >= alertPct || s.lowMem;
         pctText = usedPct + "%";
         capText = Fmt.size(s.usedKb) + " / " + Fmt.size(s.totalKb);
-        line2 = "本应用 " + Fmt.size(s.selfPss) + " · 进程 " + s.procCount;
+        line2 = "本应用 " + Fmt.size(s.selfPss) + " · 进程 " + s.procCount
+                + (s.ts > 0 ? " · " + clock.format(new java.util.Date(s.ts)) : "");
 
         rows = limit;
         for (int i = 0; i < limit; i++) {

@@ -71,6 +71,7 @@ public final class TreemapView extends View {
             labels.add(p.self ? "本应用" : Labels.of(getContext(), p.pkg));
             sizes.add(p.kb());
         }
+        layoutCells(getWidth(), getHeight());   // 尺寸没变也要重排，否则下一帧就是空图
         requestLayout();
         invalidate();
     }

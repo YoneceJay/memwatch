@@ -280,8 +280,11 @@ public final class OverlayService extends Service implements Sampler.Listener {
     private void applyStyle(PinnedView v) {
         if (v == null) return;
         v.setMode(Prefs.subMode(this));
-        v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
-                Math.max(8, Prefs.textSizeSp(this) - 2), Prefs.alertPct(this));
+        int size = Prefs.subTextSizeSp(this) > 0 ? Prefs.subTextSizeSp(this)
+                : Math.max(8, Prefs.textSizeSp(this) - 2);
+        int bgA = Prefs.subBgAlphaPct(this) > 0 ? Prefs.subBgAlphaPct(this) : Prefs.bgAlphaPct(this);
+        int txA = Prefs.subTextAlphaPct(this) > 0 ? Prefs.subTextAlphaPct(this) : Prefs.textAlphaPct(this);
+        v.setStyle(Theme.effective(this), bgA, txA, size, Prefs.alertPct(this));
     }
 
     /** 每次开启时把窗口摆到屏幕正中（不做任何自动修正，之后随用户拖动） */
