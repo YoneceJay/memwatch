@@ -1,0 +1,8 @@
+# 工具链与构建产物不入库（41MB，且 /sdcard 是 noexec）
+toolchain/
+*.apk
+*.apk.idsig
+build/
+.gradle/
+local.properties
+*.class

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.dsh.memwatch"
+    android:versionCode="7"
+    android:versionName="1.5">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="33" />
+
+    <!-- 悬浮窗 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 前台服务保活悬浮窗 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 13+ 通知（前台服务通知） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 11+ 读取全部已安装应用 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Shizuku：免 ROOT 申请 shell 权限 -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- 亮屏判断用于省电节流 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:hasCode="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.DeviceDefault.Light"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <meta-data
+            android:name="moe.shizuku.client.V3_SUPPORT"
+            android:value="true" />
+
+        <!-- Shizuku 通过它把 shell binder 交给本应用。
+             注意：这里不能再挂 android:permission，否则 Shizuku（普通应用身份）
+             调不进 provider，binder 永远拿不到。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="com.dsh.memwatch.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="设置"
+            android:theme="@android:style/Theme.DeviceDefault.Light" />
+
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+    </application>
+</manifest>
