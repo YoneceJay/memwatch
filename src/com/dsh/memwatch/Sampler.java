@@ -254,6 +254,11 @@ public final class Sampler {
         s.ts = System.currentTimeMillis();
         s.costMs = SystemClock.elapsedRealtime() - t0;
         s.intervalMs = Prefs.interval(ctx);
+        for (int i = 0; i < s.procs.size(); i++) {
+            Proc p = s.procs.get(i);
+            if (p.app && p.pkg != null) p.leak = leaks.update(p.pkg, p.kb(), s.precise);
+        }
+
         String[] pins = Prefs.pinned(ctx);
         if (pins.length > 0) {
             pinRank.clear();
@@ -274,6 +279,7 @@ public final class Sampler {
     }
 
     private final HashMap<String, Integer> pinRank = new HashMap<>(8);
+    private final LeakTracker leaks = new LeakTracker();
 
     private final Comparator<Proc> BY_PIN = new Comparator<Proc>() {
         @Override public int compare(Proc a, Proc b) {

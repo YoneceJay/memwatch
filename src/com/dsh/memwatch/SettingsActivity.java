@@ -165,10 +165,24 @@ public final class SettingsActivity extends Activity {
             }
         });
 
-        win.addView(Ui.switchRow(this, "固定应用子悬浮窗", Prefs.subOverlay(this), TXT,
+        win.addView(Ui.switchRow(this, "固定应用子悬浮窗（独立开关）", Prefs.subOn(this), TXT,
                 new Ui.OnBool() {
                     @Override public void on(boolean v) {
-                        Prefs.setSubOverlay(SettingsActivity.this, v);
+                        Prefs.setSubOn(SettingsActivity.this, v);
+                        applyWindows();
+                    }
+                }));
+        win.addView(Ui.switchRow(this, "迷你圆球模式", Prefs.ball(this), TXT,
+                new Ui.OnBool() {
+                    @Override public void on(boolean v) {
+                        Prefs.setBall(SettingsActivity.this, v);
+                        reload();
+                    }
+                }));
+        win.addView(Ui.switchRow(this, "主题跟随系统深色模式", Prefs.followSystem(this), TXT,
+                new Ui.OnBool() {
+                    @Override public void on(boolean v) {
+                        Prefs.setFollowSystem(SettingsActivity.this, v);
                         reload();
                     }
                 }));
@@ -272,8 +286,15 @@ public final class SettingsActivity extends Activity {
     }
 
     private void reload() {
-        if (!Prefs.overlayOn(this)) return;
+        if (!Prefs.overlayOn(this) && !Prefs.subOn(this)) return;
         startService(new Intent(this, OverlayService.class).setAction(OverlayService.ACTION_RELOAD));
+    }
+
+    /** 子窗开关变化：服务没在跑时按需拉起，两个都关时停掉 */
+    private void applyWindows() {
+        boolean any = Prefs.overlayOn(this) || Prefs.subOn(this);
+        if (any) startService(new Intent(this, OverlayService.class).setAction(OverlayService.ACTION_RELOAD));
+        else stopService(new Intent(this, OverlayService.class));
     }
 
     private String shizukuState() {

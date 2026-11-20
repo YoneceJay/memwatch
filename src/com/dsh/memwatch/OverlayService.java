@@ -17,10 +17,18 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.Toast;
 
-/** 悬浮窗前台服务：主悬浮窗 + 固定应用子悬浮窗，共用一个采样引擎。 */
+/**
+ * 悬浮窗前台服务。
+ *
+ * 主悬浮窗与固定应用子悬浮窗是**两个独立窗口、两个独立开关**，
+ * 谁开着就只创建谁；两个都关时服务自己停掉。
+ * 拖动时窗口尺寸固定（首帧后写死 width/height），避免每次 MOVE 触发重新测量，
+ * 手感才跟得上手指；边界收敛放在抬手时做。
+ */
 public final class OverlayService extends Service implements Sampler.Listener {
 
     public static final String ACTION_STOP = "com.dsh.memwatch.action.STOP";
@@ -30,41 +38,43 @@ public final class OverlayService extends Service implements Sampler.Listener {
     private static final String CHANNEL = "memwatch_overlay";
 
     private WindowManager wm;
+    private Sampler sampler;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private int slop;
+
     private OverlayView view;
     private WindowManager.LayoutParams lp;
+    private boolean mainAttached;
+
     private PinnedView pinned;
     private WindowManager.LayoutParams pinnedLp;
     private boolean pinnedAttached;
 
-    private Sampler sampler;
-    private final Handler main = new Handler(Looper.getMainLooper());
-
+    // 拖动状态
     private float downRawX, downRawY;
     private int startX, startY;
     private boolean dragging;
     private long downAt;
     private boolean longFired;
-    private int slop;
-    private boolean attached;
+
     private boolean wasAlert;
     private long lastAlertAt;
-    private boolean targetPinned;
 
     private final Runnable longPress = new Runnable() {
         @Override public void run() {
             if (dragging) return;
             longFired = true;
-            Toast.makeText(OverlayService.this, "已关闭悬浮窗，可从应用内重新开启", Toast.LENGTH_SHORT).show();
-            stopSelf();
+            Prefs.setOverlayOn(OverlayService.this, false);
+            syncWindows();
+            Toast.makeText(OverlayService.this, "已关闭主悬浮窗", Toast.LENGTH_SHORT).show();
         }
     };
 
     @Override public void onCreate() {
         super.onCreate();
-        slop = (int) (6 * getResources().getDisplayMetrics().density);
+        slop = ViewConfiguration.get(this).getScaledTouchSlop();
         sampler = Sampler.get(this);
         try { ShizukuShell.init(); } catch (Throwable ignore) {}
-        Prefs.setOverlayOn(this, true);
         wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         startForeground(NOTIF_ID, buildNotification());
         if (!canOverlay()) {
@@ -72,18 +82,18 @@ public final class OverlayService extends Service implements Sampler.Listener {
             stopSelf();
             return;
         }
-        addOverlay();
+        syncWindows();
         sampler.addListener(this);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            Prefs.setOverlayOn(this, false);
+            Prefs.setSubOn(this, false);
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (intent != null && ACTION_RELOAD.equals(intent.getAction())) {
-            applyPrefs();
-        }
+        syncWindows();
         return START_STICKY;
     }
 
@@ -94,27 +104,19 @@ public final class OverlayService extends Service implements Sampler.Listener {
     @Override public void onDestroy() {
         main.removeCallbacks(longPress);
         if (sampler != null) sampler.removeListener(this);
-        if (view != null && attached) {
-            try { wm.removeView(view); } catch (Throwable ignore) {}
-        }
-        if (pinned != null && pinnedAttached) {
-            try { wm.removeView(pinned); } catch (Throwable ignore) {}
-        }
-        attached = false;
-        pinnedAttached = false;
-        view = null;
-        pinned = null;
-        Prefs.setOverlayOn(this, false);
+        removeMain();
+        removePinned();
         super.onDestroy();
     }
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        clamp(lp, view);
-        clamp(pinnedLp, pinned);
+        clamp(lp, view, false);
+        clamp(pinnedLp, pinned, false);
+        applyStyles();
     }
 
-    // ------------------------------------------------------------------ 窗口
+    // ------------------------------------------------------------------ 窗口管理
 
     private boolean canOverlay() {
         return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this);
@@ -126,7 +128,7 @@ public final class OverlayService extends Service implements Sampler.Listener {
                 : WindowManager.LayoutParams.TYPE_PHONE;
     }
 
-    private WindowManager.LayoutParams baseParams(int x, int y) {
+    private WindowManager.LayoutParams params(int x, int y) {
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -140,15 +142,36 @@ public final class OverlayService extends Service implements Sampler.Listener {
         return p;
     }
 
-    private void addOverlay() {
+    /** 按两个开关同步窗口；都关就停服务 */
+    private void syncWindows() {
+        boolean wantMain = Prefs.overlayOn(this);
+        boolean wantSub = Prefs.subOn(this) && Prefs.pinned(this).length > 0;
+        if (!wantMain && !wantSub) {
+            stopSelf();
+            return;
+        }
+        if (wantMain) {
+            if (!mainAttached) addMain();
+            else { applyStyle(view); }
+        } else {
+            removeMain();
+        }
+        if (wantSub) {
+            if (!pinnedAttached) addPinned();
+            else { applyStyle(pinned); }
+        } else {
+            removePinned();
+        }
+    }
+
+    private void addMain() {
         view = new OverlayView(this);
         applyStyle(view);
         view.bind(sampler.snapshot(), Prefs.topN(this));
-
         int px = Prefs.overlayX(this), py = Prefs.overlayY(this);
         if (px == Integer.MIN_VALUE) px = (int) (12 * getResources().getDisplayMetrics().density);
         if (py == Integer.MIN_VALUE) py = (int) (110 * getResources().getDisplayMetrics().density);
-        lp = baseParams(px, py);
+        lp = params(px, py);
         view.setOnTouchListener(new View.OnTouchListener() {
             @Override public boolean onTouch(View v, MotionEvent e) {
                 return handleTouch(e, false);
@@ -156,73 +179,112 @@ public final class OverlayService extends Service implements Sampler.Listener {
         });
         try {
             wm.addView(view, lp);
-            attached = true;
+            mainAttached = true;
+            freezeSize(lp, view);
+            main.post(new Runnable() {
+                @Override public void run() { clamp(lp, view, true); }
+            });
         } catch (Throwable t) {
+            mainAttached = false;
             Toast.makeText(this, "悬浮窗添加失败：" + t.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
-            stopSelf();
-            return;
         }
-        main.post(new Runnable() {
-            @Override public void run() { clamp(lp, view); }
-        });
     }
 
-    private void ensurePinned() {
-        String[] pkgs = Prefs.pinned(this);
-        boolean want = Prefs.subOverlay(this) && pkgs.length > 0;
-        if (want && !pinnedAttached) {
-            pinned = new PinnedView(this);
-            applyStyle(pinned);
-            int px = Prefs.subX(this), py = Prefs.subY(this);
-            int screenW = getResources().getDisplayMetrics().widthPixels;
-            if (px == Integer.MIN_VALUE) px = screenW - (int) (110 * getResources().getDisplayMetrics().density);
-            if (py == Integer.MIN_VALUE) py = (int) (300 * getResources().getDisplayMetrics().density);
-            pinnedLp = baseParams(px, py);
-            pinned.setOnTouchListener(new View.OnTouchListener() {
-                @Override public boolean onTouch(View v, MotionEvent e) {
-                    return handleTouch(e, true);
-                }
-            });
-            try {
-                wm.addView(pinned, pinnedLp);
-                pinnedAttached = true;
-                main.post(new Runnable() {
-                    @Override public void run() { clamp(pinnedLp, pinned); }
-                });
-            } catch (Throwable ignore) {
-                pinnedAttached = false;
+    private void removeMain() {
+        if (view != null && mainAttached) {
+            try { wm.removeView(view); } catch (Throwable ignore) {}
+        }
+        mainAttached = false;
+        view = null;
+        lp = null;
+    }
+
+    private void addPinned() {
+        pinned = new PinnedView(this);
+        applyStyle(pinned);
+        pinned.bind(sampler.snapshot(), Prefs.pinned(this));
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int px = Prefs.subX(this), py = Prefs.subY(this);
+        if (px == Integer.MIN_VALUE) px = screenW - (int) (116 * getResources().getDisplayMetrics().density);
+        if (py == Integer.MIN_VALUE) py = (int) (320 * getResources().getDisplayMetrics().density);
+        pinnedLp = params(px, py);
+        pinned.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                return handleTouch(e, true);
             }
-        } else if (!want && pinnedAttached) {
-            try { wm.removeView(pinned); } catch (Throwable ignore) {}
+        });
+        try {
+            wm.addView(pinned, pinnedLp);
+            pinnedAttached = true;
+            freezeSize(pinnedLp, pinned);
+            main.post(new Runnable() {
+                @Override public void run() { clamp(pinnedLp, pinned, true); }
+            });
+        } catch (Throwable ignore) {
             pinnedAttached = false;
             pinned = null;
         }
     }
 
+    private void removePinned() {
+        if (pinned != null && pinnedAttached) {
+            try { wm.removeView(pinned); } catch (Throwable ignore) {}
+        }
+        pinnedAttached = false;
+        pinned = null;
+        pinnedLp = null;
+    }
+
+    /** 首帧后把 wrap_content 写死成具体尺寸：拖动时不再重新测量，跟手 */
+    private void freezeSize(WindowManager.LayoutParams p, View v) {
+        if (p == null || v == null) return;
+        int w = v.getWidth(), h = v.getHeight();
+        if (w <= 0 || h <= 0) return;
+        WindowManager.LayoutParams copy = p;
+        copy.width = w;
+        copy.height = h;
+        try { wm.updateViewLayout(v, copy); } catch (Throwable ignore) {}
+    }
+
+    private void applyStyles() {
+        applyStyle(view);
+        applyStyle(pinned);
+    }
+
     private void applyStyle(OverlayView v) {
-        Theme t = Theme.get(Prefs.themeId(this));
-        v.setStyle(t, Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this), Prefs.textSizeSp(this),
-                Prefs.alertPct(this), Prefs.expanded(this), Prefs.showBar(this), Prefs.showCurve(this));
+        if (v == null) return;
+        v.setBall(Prefs.ball(this));
+        v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
+                Prefs.textSizeSp(this), Prefs.alertPct(this), Prefs.expanded(this),
+                Prefs.showBar(this), Prefs.showCurve(this));
+        refreeze(v == view ? lp : null, v);
     }
 
     private void applyStyle(PinnedView v) {
-        Theme t = Theme.get(Prefs.themeId(this));
-        v.setStyle(t, Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
+        if (v == null) return;
+        v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
                 Math.max(8, Prefs.textSizeSp(this) - 2), Prefs.alertPct(this));
+        refreeze(v == pinned ? pinnedLp : null, v);
     }
 
-    private void applyPrefs() {
-        if (view != null) {
-            applyStyle(view);
-            view.bind(sampler.snapshot(), Prefs.topN(this));
-        }
-        if (pinned != null) applyStyle(pinned);
+    /** 样式变化可能改变尺寸（例如进入圆球模式），先放开 wrap_content，再在下一帧重新固定 */
+    private void refreeze(final WindowManager.LayoutParams p, final View v) {
+        if (p == null || v == null) return;
+        p.width = WindowManager.LayoutParams.WRAP_CONTENT;
+        p.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
+        v.postDelayed(new Runnable() {
+            @Override public void run() { freezeSize(p, v); }
+        }, 40);
     }
+
+    // ------------------------------------------------------------------ 拖动
 
     private boolean handleTouch(MotionEvent e, boolean isPinned) {
         WindowManager.LayoutParams p = isPinned ? pinnedLp : lp;
         View v = isPinned ? pinned : view;
-        targetPinned = isPinned;
+        if (p == null || v == null) return false;
+
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downRawX = e.getRawX();
@@ -251,23 +313,11 @@ public final class OverlayService extends Service implements Sampler.Listener {
             case MotionEvent.ACTION_UP:
                 main.removeCallbacks(longPress);
                 if (dragging) {
-                    if (isPinned) {
-                        clamp(p, v);
-                        Prefs.setSubPos(this, p.x, p.y);
-                    } else {
-                        snapToEdge();
-                        Prefs.setOverlayPos(this, lp.x, lp.y);
-                    }
+                    clamp(p, v, true);
+                    if (isPinned) Prefs.setSubPos(this, p.x, p.y);
+                    else Prefs.setOverlayPos(this, p.x, p.y);
                 } else if (!longFired && System.currentTimeMillis() - downAt < 400) {
-                    if (isPinned) {
-                        Intent i = new Intent(this, MainActivity.class);
-                        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                        try { startActivity(i); } catch (Throwable ignore) {}
-                    } else {
-                        boolean exp = !Prefs.expanded(this);
-                        Prefs.setExpanded(this, exp);
-                        applyPrefs();
-                    }
+                    onTap(isPinned);
                 }
                 return true;
             case MotionEvent.ACTION_CANCEL:
@@ -278,17 +328,28 @@ public final class OverlayService extends Service implements Sampler.Listener {
         }
     }
 
-    private void snapToEdge() {
-        int screenW = getResources().getDisplayMetrics().widthPixels;
-        int w = view.getWidth();
-        int mid = screenW / 2;
-        lp.x = lp.x + w / 2 < mid ? (int) (8 * getResources().getDisplayMetrics().density)
-                                  : screenW - w - (int) (8 * getResources().getDisplayMetrics().density);
-        clamp(lp, view);
-        Prefs.setOverlayPos(this, lp.x, lp.y);
+    private void onTap(boolean isPinned) {
+        if (isPinned) {
+            Intent i = new Intent(this, MainActivity.class);
+            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            try { startActivity(i); } catch (Throwable ignore) {}
+            return;
+        }
+        if (Prefs.ball(this)) {
+            // 圆球点一下：展开成面板
+            Prefs.setBall(this, false);
+            applyStyle(view);
+            view.bind(sampler.snapshot(), Prefs.topN(this));
+            return;
+        }
+        boolean exp = !Prefs.expanded(this);
+        Prefs.setExpanded(this, exp);
+        applyStyle(view);
+        view.bind(sampler.snapshot(), Prefs.topN(this));
     }
 
-    private void clamp(WindowManager.LayoutParams p, View v) {
+    /** snap=true 时贴边并夹进屏幕；拖动过程中不夹，免得跟手时被推走 */
+    private void clamp(WindowManager.LayoutParams p, View v, boolean snap) {
         if (p == null || v == null) return;
         int screenW = getResources().getDisplayMetrics().widthPixels;
         int screenH = getResources().getDisplayMetrics().heightPixels;
@@ -298,18 +359,20 @@ public final class OverlayService extends Service implements Sampler.Listener {
         if (p.y < 0) p.y = 0;
         if (p.x > screenW - w) p.x = Math.max(0, screenW - w);
         if (p.y > screenH - h) p.y = Math.max(0, screenH - h);
+        if (snap && p == lp) {
+            int mid = screenW / 2;
+            p.x = p.x + w / 2 < mid ? (int) (8 * getResources().getDisplayMetrics().density)
+                                    : screenW - w - (int) (8 * getResources().getDisplayMetrics().density);
+        }
         try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
     }
 
-    // ------------------------------------------------------------------ 采样回调
+    // ------------------------------------------------------------------ 采样
 
     @Override public void onSample(Snap s) {
-        if (view != null) view.bind(s, Prefs.topN(this));
+        if (view != null && mainAttached) view.bind(s, Prefs.topN(this));
 
-        ensurePinned();
-        if (pinned != null && pinnedAttached) {
-            pinned.bind(s, Prefs.pinned(this));
-        }
+        if (pinnedAttached && pinned != null) pinned.bind(s, Prefs.pinned(this));
 
         boolean a = s.usedPct() >= Prefs.alertPct(this) || s.lowMem;
         long now = System.currentTimeMillis();
@@ -363,11 +426,11 @@ public final class OverlayService extends Service implements Sampler.Listener {
             b = new Notification.Builder(this);
         }
         b.setContentTitle("内存监视器")
-                .setContentText("实时悬浮窗运行中")
+                .setContentText("悬浮窗运行中")
                 .setSmallIcon(android.R.drawable.ic_menu_manage)
                 .setOngoing(true)
                 .setContentIntent(pi)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPi);
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "全部停止", stopPi);
         return b.build();
     }
 

@@ -14,6 +14,7 @@ public final class Proc {
     public String label;
     public boolean self;
     public boolean app;      // 有包名的应用进程
+    public boolean leak;     // 疑似持续增长
     public int procCount = 1;
 
     public void reset() {
@@ -25,6 +26,7 @@ public final class Proc {
         label = null;
         self = false;
         app = false;
+        leak = false;
         procCount = 1;
     }
 

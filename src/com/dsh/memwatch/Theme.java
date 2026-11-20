@@ -43,6 +43,16 @@ public final class Theme {
         return ALL[id];
     }
 
+    /** 跟随系统深色模式：夜间用深色主题，日间用浅色主题；关闭跟随时用用户选的主题 */
+    public static Theme effective(android.content.Context c) {
+        if (Prefs.followSystem(c)) {
+            int mode = c.getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES ? ALL[0] : ALL[1];
+        }
+        return get(Prefs.themeId(c));
+    }
+
     public static String[] names() {
         String[] n = new String[ALL.length];
         for (int i = 0; i < ALL.length; i++) n[i] = ALL[i].name;

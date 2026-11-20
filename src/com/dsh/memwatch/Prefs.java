@@ -144,12 +144,31 @@ public final class Prefs {
     }
 
     // ---- 固定应用子悬浮窗 ----
-    public static boolean subOverlay(Context c) {
-        return sp(c).getBoolean("sub_overlay", true);
+    /** 固定应用子悬浮窗开关（与主悬浮窗完全独立） */
+    public static boolean subOn(Context c) {
+        return sp(c).getBoolean("sub_on", false);
     }
 
-    public static void setSubOverlay(Context c, boolean v) {
-        sp(c).edit().putBoolean("sub_overlay", v).apply();
+    public static void setSubOn(Context c, boolean v) {
+        sp(c).edit().putBoolean("sub_on", v).apply();
+    }
+
+    /** 迷你圆球模式 */
+    public static boolean ball(Context c) {
+        return sp(c).getBoolean("ball", false);
+    }
+
+    public static void setBall(Context c, boolean v) {
+        sp(c).edit().putBoolean("ball", v).apply();
+    }
+
+    /** 主题跟随系统深色模式 */
+    public static boolean followSystem(Context c) {
+        return sp(c).getBoolean("follow_system", true);
+    }
+
+    public static void setFollowSystem(Context c, boolean v) {
+        sp(c).edit().putBoolean("follow_system", v).apply();
     }
 
     public static int subX(Context c) {

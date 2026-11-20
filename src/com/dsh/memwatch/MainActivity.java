@@ -35,7 +35,7 @@ public final class MainActivity extends Activity implements Sampler.Listener {
 
     private TextView tvPct, tvCap, tvDetail, tvSelfBig, tvSelfDetail, tvStatus, tvHint, tvRankTitle;
     private ProgressBar bar;
-    private Button btnOverlay;
+    private Button btnMain, btnSub;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -126,13 +126,40 @@ public final class MainActivity extends Activity implements Sampler.Listener {
         self.addView(tvStatus);
         root.addView(self);
 
-        // 悬浮窗开关
+        // 两个相互独立的悬浮窗开关
         LinearLayout overlayCard = Ui.card(this, CARD, 14);
-        btnOverlay = Ui.button(this, "开启悬浮窗", Color.WHITE, ACCENT);
-        btnOverlay.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { toggleOverlay(); }
+        overlayCard.addView(Ui.text(this, "悬浮窗（互相独立）", 13, DIM, false));
+        btnMain = Ui.button(this, "主悬浮窗", Color.WHITE, ACCENT);
+        btnMain.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!Prefs.overlayOn(MainActivity.this) && !ensureOverlayPermission()) return;
+                Prefs.setOverlayOn(MainActivity.this, !Prefs.overlayOn(MainActivity.this));
+                ensureService();
+            }
         });
-        overlayCard.addView(btnOverlay);
+        overlayCard.addView(btnMain, Ui.full(8, this));
+        btnSub = Ui.button(this, "固定应用小窗", Color.WHITE, 0xFF3D7BD8);
+        btnSub.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!Prefs.subOn(MainActivity.this)) {
+                    if (Prefs.pinned(MainActivity.this).length == 0) {
+                        Toast.makeText(MainActivity.this, "先长按列表里的应用把它固定", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (!ensureOverlayPermission()) return;
+                }
+                Prefs.setSubOn(MainActivity.this, !Prefs.subOn(MainActivity.this));
+                ensureService();
+            }
+        });
+        overlayCard.addView(btnSub, Ui.full(6, this));
+        overlayCard.addView(Ui.switchRow(this, "迷你圆球模式", Prefs.ball(this), TXT,
+                new Ui.OnBool() {
+                    @Override public void on(boolean v) {
+                        Prefs.setBall(MainActivity.this, v);
+                        reloadOverlay();
+                    }
+                }));
         root.addView(overlayCard);
 
         // 六个常用开关
@@ -188,30 +215,41 @@ public final class MainActivity extends Activity implements Sampler.Listener {
         return t;
     }
 
-    private void toggleOverlay() {
-        if (Prefs.overlayOn(this)) {
-            stopService(new Intent(this, OverlayService.class));
-            Prefs.setOverlayOn(this, false);
-            btnOverlay.setText("开启悬浮窗");
-            return;
+    /** 返回 true 表示已有悬浮窗权限 */
+    private boolean ensureOverlayPermission() {
+        if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) return true;
+        Toast.makeText(this, "请先允许「显示在其他应用上层」", Toast.LENGTH_LONG).show();
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Throwable t) {
+            Toast.makeText(this, "无法打开授权页", Toast.LENGTH_LONG).show();
         }
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请先允许「显示在其他应用上层」", Toast.LENGTH_LONG).show();
-            try {
-                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + getPackageName())));
-            } catch (Throwable t) {
-                Toast.makeText(this, "无法打开授权页", Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
-        startService(new Intent(this, OverlayService.class));
-        Prefs.setOverlayOn(this, true);
-        btnOverlay.setText("关闭悬浮窗");
+        return false;
+    }
+
+    private void ensureService() {
+        boolean any = Prefs.overlayOn(this) || Prefs.subOn(this);
+        Intent i = new Intent(this, OverlayService.class);
+        if (any) startService(i.setAction(OverlayService.ACTION_RELOAD));
+        else stopService(i);
+        updateButtons();
+    }
+
+    private void updateButtons() {
+        if (btnMain == null) return;
+        boolean m = Prefs.overlayOn(this);
+        boolean s = Prefs.subOn(this);
+        btnMain.setText(m ? "主悬浮窗：开" : "主悬浮窗：关");
+        btnMain.setBackgroundColor(0);
+        btnSub.setText(s ? "固定应用小窗：开" : "固定应用小窗：关");
+        btnSub.setBackgroundColor(0);
+        Ui.paintButton(btnMain, m ? 0xFF2F6FED : 0xFF9AA6B5);
+        Ui.paintButton(btnSub, s ? 0xFF3D7BD8 : 0xFF9AA6B5);
     }
 
     private void reloadOverlay() {
-        if (!Prefs.overlayOn(this)) return;
+        if (!Prefs.overlayOn(this) && !Prefs.subOn(this)) return;
         startService(new Intent(this, OverlayService.class).setAction(OverlayService.ACTION_RELOAD));
     }
 
@@ -220,7 +258,7 @@ public final class MainActivity extends Activity implements Sampler.Listener {
     @Override protected void onResume() {
         super.onResume();
         sampler.addListener(this);
-        btnOverlay.setText(Prefs.overlayOn(this) ? "关闭悬浮窗" : "开启悬浮窗");
+        updateButtons();
         onSample(sampler.snapshot());
     }
 
@@ -261,7 +299,9 @@ public final class MainActivity extends Activity implements Sampler.Listener {
 
         rows.fill(s, Prefs.pinned(this));
         adapter.notifyDataSetChanged();
-        tvRankTitle.setText(s.root ? "应用内存排行（" + rows.size + "）" : "应用列表不可用（需要 ROOT / Shizuku）");
+        tvRankTitle.setText(s.root
+                ? "应用内存排行（" + rows.size + "）" + (rows.leakCount > 0 ? " · 疑似增长 " + rows.leakCount : "")
+                : "应用列表不可用（需要 ROOT / Shizuku）");
     }
 
     // ------------------------------------------------------------------ 列表
@@ -339,23 +379,26 @@ public final class MainActivity extends Activity implements Sampler.Listener {
         boolean[] accent = new boolean[64];
         boolean[] pinned = new boolean[64];
         int size;
+        int leakCount;
 
         void fill(Snap s, String[] pins) {
             int n = s.procs.size();
             ensure(n);
             size = n;
+            leakCount = 0;
             for (int i = 0; i < n; i++) {
                 Proc p = s.procs.get(i);
                 pkg[i] = p.pkg;
                 if (p.app) {
                     String label = p.label != null && p.label.length() > 0 ? p.label : p.pkg;
-                    name[i] = p.self ? "内存监视器（本应用）" : label;
+                    name[i] = p.self ? "内存监视器（本应用）" : (p.leak ? "↑ " + label : label);
                     StringBuilder sb = new StringBuilder(48);
                     sb.append(p.pkg);
                     if (p.procCount > 1) sb.append(" · ").append(p.procCount).append(" 个进程");
                     sub[i] = sb.toString();
                     accent[i] = true;
                     pinned[i] = isPinned(p.pkg, pins);
+                    if (p.leak) leakCount++;
                 } else {
                     name[i] = p.name;
                     sub[i] = "系统进程";

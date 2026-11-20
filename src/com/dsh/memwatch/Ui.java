@@ -130,6 +130,15 @@ public final class Ui {
                 .show();
     }
 
+    /** 重新给按钮上色（开关状态变色） */
+    public static void paintButton(Button b, int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(dp(b.getContext(), 10));
+        b.setBackground(g);
+        b.setTextColor(Color.WHITE);
+    }
+
     public static int tint(int color, int alphaPct) {
         return Theme.alpha(color, alphaPct);
     }

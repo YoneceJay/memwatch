@@ -48,6 +48,8 @@ public final class OverlayView extends View {
     private int curveHead;
 
     private String lastKey = "";
+    private boolean ball;
+    private final Paint pRing = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     public OverlayView(Context c) {
         super(c);
@@ -66,9 +68,19 @@ public final class OverlayView extends View {
         pText.setTextSize(px * 1.02f);
         pDim.setTextSize(px * 0.92f);
         pCurve.setStrokeWidth(1.4f * density);
+        pRing.setStyle(Paint.Style.STROKE);
+        pRing.setStrokeWidth(3f * density);
         pad = 9f * density;
         lineH = px * 1.7f;
         rowH = px * 1.42f;
+    }
+
+    public void setBall(boolean b) {
+        if (ball == b) return;
+        ball = b;
+        lastKey = "";
+        requestLayout();
+        invalidate();
     }
 
     public void setStyle(Theme t, int bgAlpha, int textAlpha, int sizeSp, int alertPct,
@@ -133,6 +145,10 @@ public final class OverlayView extends View {
 
     private String shortName(Proc pr) {
         if (pr.self) return "本应用";
+        if (pr.leak) {
+            String base = pr.label != null && pr.label.length() > 0 ? pr.label : pr.pkg;
+            return "↑ " + (base == null ? "" : base);
+        }
         if (pr.label != null && pr.label.length() > 0) return pr.label;
         if (!pr.app) return pr.name == null ? "" : pr.name;
         String pkg = pr.pkg == null ? "" : pr.pkg;
@@ -141,6 +157,11 @@ public final class OverlayView extends View {
     }
 
     @Override protected void onMeasure(int wSpec, int hSpec) {
+        if (ball) {
+            int d = (int) Math.max(52f * density, textSizeSp * density * 4.2f);
+            setMeasuredDimension(d, d);
+            return;
+        }
         float w = pBig.measureText(pctText) + 8f * density + pDim.measureText(capText);
         float w2 = pDim.measureText(line2);
         if (w2 > w) w = w2;
@@ -167,6 +188,10 @@ public final class OverlayView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         int w = getWidth(), h = getHeight();
+        if (ball) {
+            drawBall(canvas, w, h);
+            return;
+        }
         float r = 10f * density;
 
         pBg.setColor(Theme.alpha(theme.bg, bgAlphaPct));
@@ -212,6 +237,27 @@ public final class OverlayView extends View {
             pCurve.setColor(Theme.alpha(theme.curve, textAlphaPct));
             drawCurve(canvas, x, cy + 3f * density, w - pad * 2, 15f * density);
         }
+    }
+
+    private void drawBall(Canvas canvas, int w, int h) {
+        float cx = w / 2f, cy = h / 2f;
+        float r = Math.min(w, h) / 2f - pRing.getStrokeWidth();
+        pBg.setColor(Theme.alpha(theme.bg, bgAlphaPct));
+        canvas.drawCircle(cx, cy, r, pBg);
+
+        pTrack.setColor(Theme.alpha(theme.track, textAlphaPct));
+        canvas.drawCircle(cx, cy, r, pTrack);
+
+        int c = alert ? theme.alert : (usedPct >= alertPct - 12 ? theme.warn : theme.ok);
+        pRing.setColor(Theme.alpha(c, textAlphaPct));
+        float sweep = 360f * Math.min(100, Math.max(0, usedPct)) / 100f;
+        canvas.drawArc(new RectF(cx - r, cy - r, cx + r, cy + r), -90f, sweep, false, pRing);
+
+        pBig.setColor(Theme.alpha(alert ? theme.alert : theme.text, textAlphaPct));
+        String txt = usedPct + "%";
+        pBig.setTextSize(textSizeSp * density * 1.1f);
+        float tw = pBig.measureText(txt);
+        canvas.drawText(txt, cx - tw / 2f, cy + pBig.getTextSize() * 0.35f, pBig);
     }
 
     private void drawBar(Canvas canvas, float x, float y, float w) {
