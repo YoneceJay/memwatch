@@ -19,6 +19,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.widget.Toast;
 
 /**
@@ -111,8 +113,7 @@ public final class OverlayService extends Service implements Sampler.Listener {
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        clamp(lp, view, false);
-        clamp(pinnedLp, pinned, false);
+        // 按需求不做任何位置修正：用户放到哪就留在哪
         applyStyles();
     }
 
@@ -180,10 +181,8 @@ public final class OverlayService extends Service implements Sampler.Listener {
         try {
             wm.addView(view, lp);
             mainAttached = true;
-            freezeSize(lp, view);
-            main.post(new Runnable() {
-                @Override public void run() { clamp(lp, view, true); }
-            });
+            centerOnEnable(lp, view);
+            animateIn(view);
         } catch (Throwable t) {
             mainAttached = false;
             Toast.makeText(this, "悬浮窗添加失败：" + t.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
@@ -216,10 +215,8 @@ public final class OverlayService extends Service implements Sampler.Listener {
         try {
             wm.addView(pinned, pinnedLp);
             pinnedAttached = true;
-            freezeSize(pinnedLp, pinned);
-            main.post(new Runnable() {
-                @Override public void run() { clamp(pinnedLp, pinned, true); }
-            });
+            centerOnEnable(pinnedLp, pinned);
+            animateIn(pinned);
         } catch (Throwable ignore) {
             pinnedAttached = false;
             pinned = null;
@@ -265,6 +262,53 @@ public final class OverlayService extends Service implements Sampler.Listener {
         v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
                 Math.max(8, Prefs.textSizeSp(this) - 2), Prefs.alertPct(this));
         refreeze(v == pinned ? pinnedLp : null, v);
+    }
+
+    /** 每次开启时把窗口摆到屏幕正中（不做任何自动修正，之后随用户拖动） */
+    private void centerOnEnable(final WindowManager.LayoutParams p, final View v) {
+        v.post(new Runnable() {
+            @Override public void run() {
+                int sw = getResources().getDisplayMetrics().widthPixels;
+                int sh = getResources().getDisplayMetrics().heightPixels;
+                p.x = Math.max(0, (sw - v.getWidth()) / 2);
+                p.y = Math.max(0, (sh - v.getHeight()) / 2);
+                try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
+                freezeSize(p, v);
+            }
+        });
+    }
+
+    /** 入场：淡入 + 轻微放大，160ms，走 Decelerate 曲线，跟 60/120Hz 都顺 */
+    private void animateIn(final View v) {
+        if (v == null) return;
+        v.setAlpha(0f);
+        v.setScaleX(0.88f);
+        v.setScaleY(0.88f);
+        v.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(170).setInterpolator(new DecelerateInterpolator())
+                .withLayer().start();
+    }
+
+    /** 形态切换：先淡出缩小 -> 换尺寸 -> 弹性放大，中间只做一次窗口尺寸变更 */
+    private void switchShape(final boolean expandPanel) {
+        if (view == null) return;
+        final boolean fromBall = Prefs.ball(this);
+        view.animate().cancel();
+        view.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f)
+                .setDuration(90).withEndAction(new Runnable() {
+                    @Override public void run() {
+                        if (view == null) return;
+                        applyStyle(view);
+                        view.bind(sampler.snapshot(), Prefs.topN(OverlayService.this));
+                        view.setAlpha(0f);
+                        view.setScaleX(0.86f);
+                        view.setScaleY(0.86f);
+                        view.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                                .setDuration(180)
+                                .setInterpolator(new OvershootInterpolator(1.05f))
+                                .withLayer().start();
+                    }
+                }).start();
     }
 
     /** 样式变化可能改变尺寸（例如进入圆球模式），先放开 wrap_content，再在下一帧重新固定 */
@@ -313,7 +357,6 @@ public final class OverlayService extends Service implements Sampler.Listener {
             case MotionEvent.ACTION_UP:
                 main.removeCallbacks(longPress);
                 if (dragging) {
-                    clamp(p, v, true);
                     if (isPinned) Prefs.setSubPos(this, p.x, p.y);
                     else Prefs.setOverlayPos(this, p.x, p.y);
                 } else if (!longFired && System.currentTimeMillis() - downAt < 400) {
@@ -336,35 +379,11 @@ public final class OverlayService extends Service implements Sampler.Listener {
             return;
         }
         if (Prefs.ball(this)) {
-            // 圆球点一下：展开成面板
-            Prefs.setBall(this, false);
-            applyStyle(view);
-            view.bind(sampler.snapshot(), Prefs.topN(this));
+            switchShape(false);          // 圆球 -> 面板
             return;
         }
         boolean exp = !Prefs.expanded(this);
-        Prefs.setExpanded(this, exp);
-        applyStyle(view);
-        view.bind(sampler.snapshot(), Prefs.topN(this));
-    }
-
-    /** snap=true 时贴边并夹进屏幕；拖动过程中不夹，免得跟手时被推走 */
-    private void clamp(WindowManager.LayoutParams p, View v, boolean snap) {
-        if (p == null || v == null) return;
-        int screenW = getResources().getDisplayMetrics().widthPixels;
-        int screenH = getResources().getDisplayMetrics().heightPixels;
-        int w = Math.max(v.getWidth(), 1);
-        int h = Math.max(v.getHeight(), 1);
-        if (p.x < 0) p.x = 0;
-        if (p.y < 0) p.y = 0;
-        if (p.x > screenW - w) p.x = Math.max(0, screenW - w);
-        if (p.y > screenH - h) p.y = Math.max(0, screenH - h);
-        if (snap && p == lp) {
-            int mid = screenW / 2;
-            p.x = p.x + w / 2 < mid ? (int) (8 * getResources().getDisplayMetrics().density)
-                                    : screenW - w - (int) (8 * getResources().getDisplayMetrics().density);
-        }
-        try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
+        switchShape(exp);                // 展开 / 收起
     }
 
     // ------------------------------------------------------------------ 采样

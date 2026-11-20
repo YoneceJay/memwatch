@@ -95,7 +95,7 @@ public final class Prefs {
 
     // ---- 主题 ----
     public static int themeId(Context c) {
-        return sp(c).getInt("theme_id", 0);
+        return sp(c).getInt("theme_id", 4);   // 默认「橙色提醒」
     }
 
     public static void setThemeId(Context c, int v) {
@@ -164,7 +164,7 @@ public final class Prefs {
 
     /** 主题跟随系统深色模式 */
     public static boolean followSystem(Context c) {
-        return sp(c).getBoolean("follow_system", true);
+        return sp(c).getBoolean("follow_system", false);
     }
 
     public static void setFollowSystem(Context c, boolean v) {
