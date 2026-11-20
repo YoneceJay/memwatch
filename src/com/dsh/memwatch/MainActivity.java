@@ -91,6 +91,13 @@ public final class MainActivity extends Activity implements Sampler.Listener {
             }
         });
         rightCol.addView(btnRefresh, Ui.full(4, this));
+        Button btnMap = Ui.button(this, "热力图", TXT, 0xFFE6ECF5);
+        btnMap.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, HeatmapActivity.class));
+            }
+        });
+        rightCol.addView(btnMap, Ui.full(4, this));
         titleRow.addView(rightCol);
         root.addView(titleRow);
 
@@ -153,13 +160,6 @@ public final class MainActivity extends Activity implements Sampler.Listener {
             }
         });
         overlayCard.addView(btnSub, Ui.full(6, this));
-        overlayCard.addView(Ui.switchRow(this, "迷你圆球模式", Prefs.ball(this), TXT,
-                new Ui.OnBool() {
-                    @Override public void on(boolean v) {
-                        Prefs.setBall(MainActivity.this, v);
-                        reloadOverlay();
-                    }
-                }));
         root.addView(overlayCard);
 
         // 六个常用开关

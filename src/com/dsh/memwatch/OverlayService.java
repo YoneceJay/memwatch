@@ -19,8 +19,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
-import android.view.animation.DecelerateInterpolator;
-import android.view.animation.OvershootInterpolator;
 import android.widget.Toast;
 
 /**
@@ -101,6 +99,16 @@ public final class OverlayService extends Service implements Sampler.Listener {
 
     @Override public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    /** 任务被清理后，只要开关还开着就把自己拉回来（配合电池白名单效果更好） */
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        if (Prefs.overlayOn(this) || Prefs.subOn(this)) {
+            try {
+                startService(new Intent(this, OverlayService.class).setAction(ACTION_RELOAD));
+            } catch (Throwable ignore) {}
+        }
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {
@@ -232,6 +240,19 @@ public final class OverlayService extends Service implements Sampler.Listener {
         pinnedLp = null;
     }
 
+    /** 拖动期间固定窗口尺寸（WM 不再每帧测量），松手恢复 wrap_content 以便内容自适应 */
+    private void setFrozen(WindowManager.LayoutParams p, View v, boolean frozen) {
+        if (p == null || v == null) return;
+        if (frozen) {
+            p.width = Math.max(1, v.getWidth());
+            p.height = Math.max(1, v.getHeight());
+        } else {
+            p.width = WindowManager.LayoutParams.WRAP_CONTENT;
+            p.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        }
+        try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
+    }
+
     /** 首帧后把 wrap_content 写死成具体尺寸：拖动时不再重新测量，跟手 */
     private void freezeSize(WindowManager.LayoutParams p, View v) {
         if (p == null || v == null) return;
@@ -250,18 +271,17 @@ public final class OverlayService extends Service implements Sampler.Listener {
 
     private void applyStyle(OverlayView v) {
         if (v == null) return;
-        v.setBall(Prefs.ball(this));
+        v.setMode(Prefs.mainMode(this));
         v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
-                Prefs.textSizeSp(this), Prefs.alertPct(this), Prefs.expanded(this),
+                Prefs.textSizeSp(this), Prefs.alertPct(this),
                 Prefs.showBar(this), Prefs.showCurve(this));
-        refreeze(v == view ? lp : null, v);
     }
 
     private void applyStyle(PinnedView v) {
         if (v == null) return;
+        v.setMode(Prefs.subMode(this));
         v.setStyle(Theme.effective(this), Prefs.bgAlphaPct(this), Prefs.textAlphaPct(this),
                 Math.max(8, Prefs.textSizeSp(this) - 2), Prefs.alertPct(this));
-        refreeze(v == pinned ? pinnedLp : null, v);
     }
 
     /** 每次开启时把窗口摆到屏幕正中（不做任何自动修正，之后随用户拖动） */
@@ -273,42 +293,37 @@ public final class OverlayService extends Service implements Sampler.Listener {
                 p.x = Math.max(0, (sw - v.getWidth()) / 2);
                 p.y = Math.max(0, (sh - v.getHeight()) / 2);
                 try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
-                freezeSize(p, v);
             }
         });
     }
 
-    /** 入场：淡入 + 轻微放大，160ms，走 Decelerate 曲线，跟 60/120Hz 都顺 */
-    private void animateIn(final View v) {
-        if (v == null) return;
-        v.setAlpha(0f);
-        v.setScaleX(0.88f);
-        v.setScaleY(0.88f);
-        v.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                .setDuration(170).setInterpolator(new DecelerateInterpolator())
-                .withLayer().start();
+    /** 入场动画：只播视图内部的 Canvas 过渡，绝不改窗口 alpha（那会整体闪烁） */
+    private void animateIn(View v) {
+        if (v instanceof OverlayView) ((OverlayView) v).playTransition();
+        else if (v instanceof PinnedView) ((PinnedView) v).playTransition();
     }
 
-    /** 形态切换：先淡出缩小 -> 换尺寸 -> 弹性放大，中间只做一次窗口尺寸变更 */
-    private void switchShape(final boolean expandPanel) {
+    /** 主悬浮窗单击：圆球 -> 简略 -> 详细 -> 圆球 */
+    private void cycleMainMode() {
         if (view == null) return;
-        final boolean fromBall = Prefs.ball(this);
-        view.animate().cancel();
-        view.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f)
-                .setDuration(90).withEndAction(new Runnable() {
-                    @Override public void run() {
-                        if (view == null) return;
-                        applyStyle(view);
-                        view.bind(sampler.snapshot(), Prefs.topN(OverlayService.this));
-                        view.setAlpha(0f);
-                        view.setScaleX(0.86f);
-                        view.setScaleY(0.86f);
-                        view.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                                .setDuration(180)
-                                .setInterpolator(new OvershootInterpolator(1.05f))
-                                .withLayer().start();
-                    }
-                }).start();
+        int next = (Prefs.mainMode(this) + 1) % 3;
+        Prefs.setMainMode(this, next);
+        applyStyle(view);
+        view.bind(sampler.snapshot(), Prefs.topN(this));
+        refreeze(lp, view);
+        view.playTransition();
+    }
+
+    /** 子悬浮窗单击：圆球 <-> 详细 */
+    private void cycleSubMode() {
+        if (pinned == null) return;
+        int next = Prefs.subMode(this) == PinnedView.MODE_BALL
+                ? PinnedView.MODE_DETAIL : PinnedView.MODE_BALL;
+        Prefs.setSubMode(this, next);
+        applyStyle(pinned);
+        pinned.bind(sampler.snapshot(), Prefs.pinned(this));
+        refreeze(pinnedLp, pinned);
+        pinned.playTransition();
     }
 
     /** 样式变化可能改变尺寸（例如进入圆球模式），先放开 wrap_content，再在下一帧重新固定 */
@@ -318,8 +333,11 @@ public final class OverlayService extends Service implements Sampler.Listener {
         p.height = WindowManager.LayoutParams.WRAP_CONTENT;
         try { wm.updateViewLayout(v, p); } catch (Throwable ignore) {}
         v.postDelayed(new Runnable() {
-            @Override public void run() { freezeSize(p, v); }
-        }, 40);
+            @Override public void run() {
+                if (dragging) return;               // 拖动中不要改尺寸
+                freezeSize(p, v);
+            }
+        }, 60);
     }
 
     // ------------------------------------------------------------------ 拖动
@@ -331,6 +349,7 @@ public final class OverlayService extends Service implements Sampler.Listener {
 
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                setFrozen(p, v, true);
                 downRawX = e.getRawX();
                 downRawY = e.getRawY();
                 startX = p.x;
@@ -356,6 +375,7 @@ public final class OverlayService extends Service implements Sampler.Listener {
             }
             case MotionEvent.ACTION_UP:
                 main.removeCallbacks(longPress);
+                setFrozen(p, v, false);
                 if (dragging) {
                     if (isPinned) Prefs.setSubPos(this, p.x, p.y);
                     else Prefs.setOverlayPos(this, p.x, p.y);
@@ -373,17 +393,10 @@ public final class OverlayService extends Service implements Sampler.Listener {
 
     private void onTap(boolean isPinned) {
         if (isPinned) {
-            Intent i = new Intent(this, MainActivity.class);
-            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            try { startActivity(i); } catch (Throwable ignore) {}
+            cycleSubMode();
             return;
         }
-        if (Prefs.ball(this)) {
-            switchShape(false);          // 圆球 -> 面板
-            return;
-        }
-        boolean exp = !Prefs.expanded(this);
-        switchShape(exp);                // 展开 / 收起
+        cycleMainMode();
     }
 
     // ------------------------------------------------------------------ 采样

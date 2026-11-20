@@ -153,6 +153,24 @@ public final class Prefs {
         sp(c).edit().putBoolean("sub_on", v).apply();
     }
 
+    /** 主悬浮窗显示形态：0=圆球 1=简略 2=详细 */
+    public static int mainMode(Context c) {
+        return sp(c).getInt("main_mode", 2);
+    }
+
+    public static void setMainMode(Context c, int v) {
+        sp(c).edit().putInt("main_mode", v).apply();
+    }
+
+    /** 固定应用小窗：0=圆球 1=详细 */
+    public static int subMode(Context c) {
+        return sp(c).getInt("sub_mode", 1);
+    }
+
+    public static void setSubMode(Context c, int v) {
+        sp(c).edit().putInt("sub_mode", v).apply();
+    }
+
     /** 迷你圆球模式 */
     public static boolean ball(Context c) {
         return sp(c).getBoolean("ball", false);

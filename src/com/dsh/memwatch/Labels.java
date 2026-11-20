@@ -13,7 +13,7 @@ import android.util.LruCache;
  */
 public final class Labels {
 
-    private static final LruCache<String, String> CACHE = new LruCache<>(512);
+    private static final LruCache<String, String> CACHE = new LruCache<>(256);
     private static PackageManager pm;
 
     private Labels() {}

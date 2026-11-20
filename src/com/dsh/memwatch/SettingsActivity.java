@@ -172,13 +172,45 @@ public final class SettingsActivity extends Activity {
                         applyWindows();
                     }
                 }));
-        win.addView(Ui.switchRow(this, "迷你圆球模式", Prefs.ball(this), TXT,
-                new Ui.OnBool() {
-                    @Override public void on(boolean v) {
-                        Prefs.setBall(SettingsActivity.this, v);
-                        reload();
-                    }
-                }));
+        Button mainMode = rowButton(win, "主悬浮窗形态：" + modeName(Prefs.mainMode(this)));
+        mainMode.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Ui.choose(SettingsActivity.this, "主悬浮窗形态",
+                        new String[]{"圆球", "简略", "详细"}, new int[]{0, 1, 2},
+                        Prefs.mainMode(SettingsActivity.this), false, new Ui.OnInt() {
+                            @Override public void on(int val) {
+                                Prefs.setMainMode(SettingsActivity.this, val);
+                                reload();
+                                build();
+                            }
+                        });
+            }
+        });
+        Button subMode = rowButton(win, "固定小窗形态：" + (Prefs.subMode(this) == 0 ? "圆球" : "详细"));
+        subMode.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Ui.choose(SettingsActivity.this, "固定小窗形态", new String[]{"圆球", "详细"},
+                        new int[]{0, 1}, Prefs.subMode(SettingsActivity.this), false, new Ui.OnInt() {
+                            @Override public void on(int val) {
+                                Prefs.setSubMode(SettingsActivity.this, val);
+                                reload();
+                                build();
+                            }
+                        });
+            }
+        });
+        Button battery = rowButton(win, "电池优化白名单（防被系统杀后台）");
+        battery.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                try {
+                    Intent i = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:" + getPackageName()));
+                    startActivity(i);
+                } catch (Throwable t) {
+                    Toast.makeText(SettingsActivity.this, "请在系统设置里手动允许后台运行", Toast.LENGTH_LONG).show();
+                }
+            }
+        });
         win.addView(Ui.switchRow(this, "主题跟随系统深色模式", Prefs.followSystem(this), TXT,
                 new Ui.OnBool() {
                     @Override public void on(boolean v) {
@@ -319,6 +351,10 @@ public final class SettingsActivity extends Activity {
 
     private static String[] pctLabels() {
         return new String[]{"20%", "40%", "60%", "80%", "100%"};
+    }
+
+    private static String modeName(int m) {
+        return m == 0 ? "圆球" : (m == 1 ? "简略" : "详细");
     }
 
     private static int idx(int[] arr, int v) {
