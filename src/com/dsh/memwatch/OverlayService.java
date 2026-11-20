@@ -57,6 +57,7 @@ public final class OverlayService extends Service implements Sampler.Listener {
     private long downAt;
     private boolean longFired;
 
+    private int pinnedRowCount;
     private boolean wasAlert;
     private long lastAlertAt;
 
@@ -407,7 +408,12 @@ public final class OverlayService extends Service implements Sampler.Listener {
     @Override public void onSample(Snap s) {
         if (view != null && mainAttached) view.bind(s, Prefs.topN(this));
 
-        if (pinnedAttached && pinned != null) pinned.bind(s, Prefs.pinned(this));
+        if (pinnedAttached && pinned != null) {
+            int before = pinnedRowCount;
+            pinned.bind(s, Prefs.pinned(this));
+            pinnedRowCount = Prefs.pinned(this).length;
+            if (before != pinnedRowCount) refreeze(pinnedLp, pinned);
+        }
 
         boolean a = s.usedPct() >= Prefs.alertPct(this) || s.lowMem;
         long now = System.currentTimeMillis();

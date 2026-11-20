@@ -103,11 +103,13 @@ public final class PinnedView extends View {
                 }
             }
             names[n] = Labels.of(getContext(), pkg);
-            vals[n] = kb > 0 ? Fmt.size(kb) : "—";
+            vals[n] = kb > 0 ? Fmt.size(kb) : "未运行";
             n++;
         }
+        boolean changed = rows != n;
         rows = n;
         alert = s.usedPct() >= alertPct || s.lowMem;
+        if (changed) requestLayout();
         invalidate();
     }
 
@@ -117,13 +119,18 @@ public final class PinnedView extends View {
             setMeasuredDimension(d, d);
             return;
         }
-        float w = pDim.measureText("固定") + pad * 2;
+        float valueW = pDim.measureText("000.0M");
+        if (rows == 0) valueW = pDim.measureText("未运行");
+        float nameW = pDim.measureText("固定");
         for (int i = 0; i < rows; i++) {
-            float rw = pDim.measureText(names[i]) + pDim.measureText(vals[i]) + 26f * density + pad * 2;
-            if (rw > w) w = rw;
+            float nw = pDim.measureText(names[i]);
+            if (nw > nameW) nameW = nw;
         }
-        if (w < 96f * density) w = 96f * density;
-        float h = pad + headerH + rows * rowH + pad * 0.6f;
+        if (nameW > 120f * density) nameW = 120f * density;   // 超长名字交给 ellipsize
+        float w = pad * 2 + nameW + 10f * density + valueW;
+        float minW = 112f * density;
+        if (w < minW) w = minW;
+        float h = pad + headerH + rows * rowH + pad * 0.7f;
         setMeasuredDimension((int) Math.ceil(w), (int) Math.ceil(h));
     }
 
@@ -158,20 +165,39 @@ public final class PinnedView extends View {
         canvas.drawRoundRect(rect, r, r, pBg);
 
         float x = pad;
-        float y = pad + headerH * 0.8f;
-        pDim.setColor(Theme.alpha(alert ? theme.alert : theme.dim, ta));
-        canvas.drawText("固定", x, y, pDim);
+        float valueW = pDim.measureText("000.0M");
+        float nameMax = w - pad * 2 - valueW - 10f * density;
 
-        float cy = pad + headerH;
+        // 表头
+        pDim.setColor(Theme.alpha(alert ? theme.alert : theme.dim, ta));
+        canvas.drawText("固定", x, pad + headerH * 0.68f, pDim);
+        pDim.setColor(Theme.alpha(theme.dim, Math.min(ta, 150)));
+        String count = String.valueOf(rows);
+        canvas.drawText(count, w - pad - pDim.measureText(count), pad + headerH * 0.68f, pDim);
+
+        // 行
+        float top = pad + headerH;
         for (int i = 0; i < rows; i++) {
+            float baseline = top + i * rowH + rowH * 0.5f + pText.getTextSize() * 0.35f;
             pText.setColor(Theme.alpha(theme.text, ta));
-            canvas.drawText(names[i], x, cy + rowH * 0.72f, pText);
+            pText.setTextSize(textSizeSp * density);
+            canvas.drawText(ellipsize(names[i], nameMax, pText), x, baseline, pText);
             float vw = pDim.measureText(vals[i]);
             pDim.setColor(Theme.alpha(theme.accent, ta));
-            canvas.drawText(vals[i], w - pad - vw, cy + rowH * 0.72f, pDim);
-            cy += rowH;
+            canvas.drawText(vals[i], w - pad - vw, baseline, pDim);
         }
         canvas.restoreToCount(save);
+    }
+
+    private String ellipsize(String s, float max, Paint p) {
+        if (s == null || max <= 0) return "";
+        if (p.measureText(s) <= max) return s;
+        int lo = 0, hi = s.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) / 2;
+            if (p.measureText(s.substring(0, mid) + "…") <= max) lo = mid; else hi = mid - 1;
+        }
+        return lo <= 0 ? "…" : s.substring(0, lo) + "…";
     }
 
     private void drawBall(Canvas canvas, int w, int h, int ta, int ba) {
